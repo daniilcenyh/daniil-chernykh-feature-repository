@@ -8,3 +8,9 @@ spring:
     driver-class-name: org.postgresql.Driver
   liquibase:
     change-log: classpath:liquibase/changelog-master.yml
+
+logging:
+  level:
+    edu.booking.hotel_booking.service.impl: DEBUG
+    org.springframework: INFO
+    org.hibernate: WARN
