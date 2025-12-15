@@ -8,10 +8,7 @@ import edu.booking.hotel_booking.dto.request.UpdateBookingRequest;
 import edu.booking.hotel_booking.dto.response.BookingResponse;
 import edu.booking.hotel_booking.entity.BookingEntity;
 import edu.booking.hotel_booking.entity.enums.BookingStatus;
-import edu.booking.hotel_booking.exception.GuestIsNotLinkedToTheRoom;
-import edu.booking.hotel_booking.exception.NumberOfGuestExceedsTheCapacity;
-import edu.booking.hotel_booking.exception.RoomNotAvailableException;
-import edu.booking.hotel_booking.exception.RoomNotFoundException;
+import edu.booking.hotel_booking.exception.*;
 import edu.booking.hotel_booking.service.BookingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +19,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -70,7 +68,78 @@ public class BookingServiceImpl implements BookingService {
 
     @Override
     public BookingResponse updateBooking(Long id, UpdateBookingRequest request) {
-        return null;
+        var existedBooking = this.bookingRepository.findById(id)
+                .orElseThrow(() -> {
+                    return new BookingNotFoundException("");
+                });
+
+        if (BookingStatus.CANCELLED.equals(existedBooking.status())) {
+            log.error("Attempt to update cancelled booking {}", id);
+            throw new CancelledBookingCannotEditedException("Cannot update cancelled booking. Please create a new one.");
+        }
+
+        validateBookingDates(request.startDate(), request.endDate());
+
+        if (request.startDate().isAfter(LocalDateTime.now())) {
+            log.error("Attempt to move booking {} to past: {}", id, request.startDate());
+            throw new BookingCannotRescheduledForThePast(
+                    "Booking start date cannot be in the past. Current time is " + LocalDateTime.now()
+            );
+        }
+
+        var existedRoom = this.roomRepository.findById(request.roomId())
+                .orElseThrow(() -> {
+                    return new BookingNotFoundException("");
+                });
+
+
+        if (!request.roomId().equals(existedBooking.roomId()) ||
+                ((!request.startDate().equals(existedBooking.startDate())) || (!request.endDate().equals(existedBooking.endDate())))
+        ) {
+            if (this.bookingRepository.isRoomAvailableExcluding(request.roomId(),
+                    request.startDate(),
+                    request.endDate(),
+                    id
+            )) {
+                var alternativeRooms = this.bookingRepository.findAvailableRooms(
+                        request.startDate(),
+                        request.endDate(),
+                        existedRoom.capacity()
+                );
+                String suggestion = alternativeRooms.isEmpty()
+                        ? "No alternative rooms available."
+                        : String.format("Consider rooms: %s",
+                        alternativeRooms.stream()
+                                .map(r -> String.format("#%d (floor %d)", r.id(), r.floor()))
+                                .collect(Collectors.joining(", ")));
+
+                throw new RoomNotAvailableException(
+                        String.format("Room %d is already booked for selected dates. %s",
+                                request.roomId(), suggestion)
+                );
+            }
+        }
+        if (validateGuestsOfExistence(request.guestIds())) {
+            throw new GuestIsNotLinkedToTheRoom("");
+        }
+        if (existedRoom.capacity() < request.guestIds().size()) {
+            log.error("Booking {} update failed: {} guests exceed room capacity {}",
+                    id, request.guestIds().size(), existedRoom.capacity());
+            throw new NumberOfGuestExceedsTheCapacity("");
+        }
+
+        var bookingToUpdate = BookingEntity.builder()
+                .id(id)
+                .roomId(request.roomId() != null ? request.roomId() : existedBooking.roomId())
+                .status(request.status() != null ? request.status() : existedBooking.status())
+                .startDate(request.startDate() != null ? request.startDate() : existedBooking.startDate())
+                .endDate(request.endDate() != null ? request.endDate() : existedBooking.endDate())
+                .createdAt(existedBooking.createdAt())
+                .build();
+        var currentGuestIds = this.bookingRepository.getGuestIdsByBooking(id);
+
+        var updated = this.bookingRepository.save(bookingToUpdate);
+        return BookingResponse.fromEntity(updated, currentGuestIds);
     }
 
     @Override
