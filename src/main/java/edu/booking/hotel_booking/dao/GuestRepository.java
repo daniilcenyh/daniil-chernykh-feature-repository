@@ -15,27 +15,27 @@ import java.util.Optional;
 @Repository
 public class GuestRepository extends BaseRepository {
 
-    private static final String TABLE_NAME = "guest";
+    private static final String TABLE_NAME = "guests";
     private final GuestRowMapper rowMapper;
 
     // SQL queries
     private static final String FIND_BY_ID = """
         SELECT id, first_name, last_name, middle_name, birth_date, phone_number, created_at 
-        FROM guest WHERE id = :id
+        FROM guests WHERE id = :id
         """;
 
     private static final String FIND_BY_PHONE = """
         SELECT id, first_name, last_name, middle_name, birth_date, phone_number, created_at 
-        FROM guest WHERE phone_number = :phoneNumber
+        FROM guests WHERE phone_number = :phoneNumber
         """;
 
     private static final String FIND_ALL = """
         SELECT id, first_name, last_name, middle_name, birth_date, phone_number, created_at 
-        FROM guest ORDER BY last_name, first_name
+        FROM guests ORDER BY last_name, first_name
         """;
 
     private static final String UPDATE = """
-        UPDATE guest
+        UPDATE guests
         SET first_name = :firstName,
             last_name = :lastName,
             middle_name = :middleName,
@@ -45,15 +45,15 @@ public class GuestRepository extends BaseRepository {
         """;
 
     private static final String DELETE = """
-        DELETE FROM guest WHERE id = :id
+        DELETE FROM guests WHERE id = :id
         """;
 
     private static final String EXISTS_BY_PHONE = """
-        SELECT COUNT(*) > 0 FROM guest WHERE phone_number = :phoneNumber
+        SELECT COUNT(*) > 0 FROM guests WHERE phone_number = :phoneNumber
         """;
 
     private static final String EXISTS_BY_ID = """
-        SELECT COUNT(*) > 0 FROM guest WHERE id = :id
+        SELECT COUNT(*) > 0 FROM guests WHERE id = :id
         """;
 
     public GuestRepository(NamedParameterJdbcTemplate jdbcTemplate,

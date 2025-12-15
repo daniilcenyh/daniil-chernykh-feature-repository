@@ -1,7 +1,7 @@
 --liquibase formatted sql
 
 --changeset trainee:init
-CREATE TABLE IF NOT EXISTS guest
+CREATE TABLE IF NOT EXISTS guests
 (
     id BIGSERIAL PRIMARY KEY,
     first_name VARCHAR(100) NOT NULL,
