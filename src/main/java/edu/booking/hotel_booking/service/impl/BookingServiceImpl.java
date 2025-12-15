@@ -33,19 +33,61 @@ public class BookingServiceImpl implements BookingService {
     @Override
     @Transactional
     public BookingResponse createBooking(CreateBookingRequest request) {
+        log.info("Starting creation of new booking for room ID: {} from {} to {}",
+                request.roomId(), request.startDate(), request.endDate());
+        log.debug("Booking creation details: guestIds={}", request.guestIds());
+
         validateBookingDates(request.startDate(), request.endDate());
         var existedRoom = this.roomRepository.findById(request.roomId())
                 .orElseThrow(() -> {
-                    return new RoomNotFoundException("");
+                    log.error("Room not found for booking creation - ID: {}", request.roomId());
+                    return new RoomNotFoundException("Room with ID: " + request.roomId() + " not found.");
                 });
+        log.debug("Found room: ID={}, floor={}, number={}, capacity={}",
+                existedRoom.id(), existedRoom.floor(),
+                existedRoom.roomNumber(), existedRoom.capacity());
+
         if (validateGuestsOfExistence(request.guestIds())) {
-            throw new GuestIsNotLinkedToTheRoom("");
+            List<Long> invalidGuestIds = request.guestIds().stream()
+                    .filter(guestId -> !guestRepository.existsById(guestId))
+                    .toList();
+            log.error("Booking creation failed - invalid guest IDs: {}", invalidGuestIds);
+            throw new GuestIsNotLinkedToTheRoom(
+                    "One or more guests do not exist. Invalid guest IDs: " + invalidGuestIds
+            );
         }
+
         if (existedRoom.capacity() < request.guestIds().size()) {
-            throw new NumberOfGuestExceedsTheCapacity("");
+            log.error("Booking creation failed - {} guests exceed room capacity {}",
+                    request.guestIds().size(), existedRoom.capacity());
+            throw new NumberOfGuestExceedsTheCapacity(
+                    "Number of guests (" + request.guestIds().size() +
+                            ") exceeds room capacity (" + existedRoom.capacity() + ")"
+            );
         }
+
         if (this.bookingRepository.isRoomAvailable(existedRoom.id(), request.startDate(), request.endDate())) {
-            throw new RoomNotAvailableException("");
+            log.warn("Room {} not available for booking from {} to {}",
+                    request.roomId(), request.startDate(), request.endDate());
+
+            var alternativeRooms = this.bookingRepository.findAvailableRooms(
+                    request.startDate(),
+                    request.endDate(),
+                    existedRoom.capacity()
+            );
+
+            String suggestion = alternativeRooms.isEmpty()
+                    ? "No alternative rooms available for the selected dates."
+                    : String.format("Consider these available rooms: %s",
+                    alternativeRooms.stream()
+                            .map(r -> String.format("#%d (floor %d, capacity %d)",
+                                    r.id(), r.floor(), r.capacity()))
+                            .collect(Collectors.joining(", ")));
+
+            throw new RoomNotAvailableException(
+                    String.format("Room %d is not available for the selected dates. %s",
+                            request.roomId(), suggestion)
+            );
         }
 
         var bookingToSave = BookingEntity.builder()
@@ -56,26 +98,47 @@ public class BookingServiceImpl implements BookingService {
                 .roomId(request.roomId())
                 .build();
 
-        BookingEntity saved = this.bookingRepository.save(bookingToSave);
+        log.debug("Attempting to save booking entity to database");
+        var saved = this.bookingRepository.save(bookingToSave);
+        log.info("Booking created successfully with ID: {}", saved.id());
+
         List<Long> guestIds = new ArrayList<>();
-        for (Long id: request.guestIds()) {
-            this.bookingRepository.addGuestToBooking(saved.id(), id);
-            guestIds.add(id);
+        log.debug("Linking {} guests to booking ID: {}", request.guestIds().size(), saved.id());
+        for (Long guestId : request.guestIds()) {
+            this.bookingRepository.addGuestToBooking(saved.id(), guestId);
+            guestIds.add(guestId);
+            log.trace("Guest ID {} linked to booking ID {}", guestId, saved.id());
         }
+
+        log.info("Booking {} completed: room ID {}, {} guests, duration {} hours",
+                saved.id(), saved.roomId(), guestIds.size(),
+                Duration.between(saved.startDate(), saved.endDate()).toHours());
 
         return BookingResponse.fromEntity(saved, guestIds);
     }
 
     @Override
     public BookingResponse updateBooking(Long id, UpdateBookingRequest request) {
+        log.info("Starting update for booking ID: {}", id);
+        log.debug("Update request details: roomId={}, startDate={}, endDate={}, status={}, guestIds={}",
+                request.roomId(), request.startDate(), request.endDate(),
+                request.status(), request.guestIds());
+
         var existedBooking = this.bookingRepository.findById(id)
                 .orElseThrow(() -> {
-                    return new BookingNotFoundException("");
+                    log.error("Booking not found for update - ID: {}", id);
+                    return new BookingNotFoundException("Booking with ID: " + id + " not found.");
                 });
+
+        log.debug("Found existing booking: roomId={}, status={}, dates={} to {}",
+                existedBooking.roomId(), existedBooking.status(),
+                existedBooking.startDate(), existedBooking.endDate());
 
         if (BookingStatus.CANCELLED.equals(existedBooking.status())) {
             log.error("Attempt to update cancelled booking {}", id);
-            throw new CancelledBookingCannotEditedException("Cannot update cancelled booking. Please create a new one.");
+            throw new CancelledBookingCannotEditedException(
+                    "Cannot update cancelled booking. Please create a new one."
+            );
         }
 
         validateBookingDates(request.startDate(), request.endDate());
@@ -89,9 +152,11 @@ public class BookingServiceImpl implements BookingService {
 
         var existedRoom = this.roomRepository.findById(request.roomId())
                 .orElseThrow(() -> {
-                    return new BookingNotFoundException("");
+                    log.error("Room not found for booking update - ID: {}", request.roomId());
+                    return new RoomNotFoundException("Room with ID: " + request.roomId() + " not found.");
                 });
 
+        log.debug("Using room: ID={}, capacity={}", existedRoom.id(), existedRoom.capacity());
 
         if (!request.roomId().equals(existedBooking.roomId()) ||
                 ((!request.startDate().equals(existedBooking.startDate())) || (!request.endDate().equals(existedBooking.endDate())))
@@ -101,6 +166,8 @@ public class BookingServiceImpl implements BookingService {
                     request.endDate(),
                     id
             )) {
+                log.warn("Room {} not available for booking update {} from {} to {}",
+                        request.roomId(), id, request.startDate(), request.endDate());
                 var alternativeRooms = this.bookingRepository.findAvailableRooms(
                         request.startDate(),
                         request.endDate(),
@@ -119,13 +186,30 @@ public class BookingServiceImpl implements BookingService {
                 );
             }
         }
+
         if (validateGuestsOfExistence(request.guestIds())) {
-            throw new GuestIsNotLinkedToTheRoom("");
+            List<Long> invalidGuestIds = request.guestIds().stream()
+                    .filter(guestId -> !guestRepository.existsById(guestId))
+                    .toList();
+            log.error("Booking update failed - invalid guest IDs: {}", invalidGuestIds);
+            throw new GuestIsNotLinkedToTheRoom(
+                    "One or more guests do not exist. Invalid guest IDs: " + invalidGuestIds
+            );
         }
         if (existedRoom.capacity() < request.guestIds().size()) {
             log.error("Booking {} update failed: {} guests exceed room capacity {}",
                     id, request.guestIds().size(), existedRoom.capacity());
-            throw new NumberOfGuestExceedsTheCapacity("");
+            throw new NumberOfGuestExceedsTheCapacity(
+                    "Number of guests (" + request.guestIds().size() +
+                            ") exceeds room capacity (" + existedRoom.capacity() + ")"
+            );
+        }
+
+        log.debug("Updating guest list for booking ID: {}", id);
+        this.bookingRepository.removeAllGuestsFromBooking(id);
+        for (Long guestId : request.guestIds()) {
+            this.bookingRepository.addGuestToBooking(id, guestId);
+            log.trace("Guest ID {} added to booking ID {}", guestId, id);
         }
 
         var bookingToUpdate = BookingEntity.builder()
@@ -136,15 +220,32 @@ public class BookingServiceImpl implements BookingService {
                 .endDate(request.endDate() != null ? request.endDate() : existedBooking.endDate())
                 .createdAt(existedBooking.createdAt())
                 .build();
-        var currentGuestIds = this.bookingRepository.getGuestIdsByBooking(id);
 
+        log.debug("Attempting to update booking entity in database");
         var updated = this.bookingRepository.save(bookingToUpdate);
+        log.info("Booking updated successfully - ID: {}", id);
+
+        var currentGuestIds = request.guestIds() != null && !request.guestIds().isEmpty()
+                ? request.guestIds()
+                : this.bookingRepository.getGuestIdsByBooking(id);
+
+        log.debug("Booking {} updated: roomId={}, status={}, {} guests",
+                id, updated.roomId(), updated.status(), currentGuestIds.size());
+
         return BookingResponse.fromEntity(updated, currentGuestIds);
     }
 
     @Override
     public void deleteBooking(Long id) {
+        log.info("Attempting to delete/cancel booking ID: {}", id);
+        if (!this.bookingRepository.existsById(id)) {
+            log.error("Booking not found for deletion - ID: {}", id);
+            throw new BookingNotFoundException("Booking with ID: " + id + " not found.");
+        }
 
+        log.debug("Cancelling booking ID: {}", id);
+        this.bookingRepository.cancel(id);
+        log.info("Booking cancelled successfully - ID: {}", id);
     }
 
     private void validateBookingDates(LocalDateTime start, LocalDateTime end) {
