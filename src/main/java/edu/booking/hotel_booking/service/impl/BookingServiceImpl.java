@@ -70,7 +70,6 @@ public class BookingServiceImpl implements BookingService {
 
     @Override
     public BookingResponse updateBooking(Long id, UpdateBookingRequest request) {
-//        var existedBooking =
         return null;
     }
 
