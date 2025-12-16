@@ -14,3 +14,12 @@ logging:
     edu.booking.hotel_booking.service.impl: DEBUG
     org.springframework: INFO
     org.hibernate: WARN
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+  show-actuator: true
